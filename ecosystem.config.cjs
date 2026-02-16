@@ -2,8 +2,8 @@ module.exports = {
   apps: [
     {
       name: "ai-test-ui",
-      script: "node_modules/next/dist/bin/next",
-      args: "start -p 2053",
+      script: "node_modules/vite/bin/vite.js",
+      args: "preview --port 2053 --host 0.0.0.0",
       cwd: "/var/www/html/projects/ai-test-ui",
       instances: 1,
       exec_mode: "fork",
