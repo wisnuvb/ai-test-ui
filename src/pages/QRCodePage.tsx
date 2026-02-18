@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useEffect, useRef, useState } from "react";
 import {
   Alert,
@@ -18,10 +19,16 @@ declare class BarcodeDetector {
 
 export const QRCodePage = () => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const captureCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const barcodeDetectorRef = useRef<BarcodeDetector | null>(null);
+  const jsQrLoadedRef = useRef(false);
+  const jsQrLoadingRef = useRef<Promise<void> | null>(null);
 
   const [isScanning, setIsScanning] = useState(false);
+  const [scanMode, setScanMode] = useState<"barcodeDetector" | "jsqr" | null>(
+    null,
+  );
   const [error, setError] = useState<string | null>(null);
   const [scannedText, setScannedText] = useState("");
 
@@ -31,6 +38,28 @@ export const QRCodePage = () => {
       stream.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
     }
+  };
+
+  const loadJsQR = async () => {
+    if (jsQrLoadedRef.current) return;
+
+    if (!jsQrLoadingRef.current) {
+      jsQrLoadingRef.current = new Promise<void>((resolve, reject) => {
+        const script = document.createElement("script");
+        script.src = "https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js";
+        script.async = true;
+        script.onload = () => {
+          jsQrLoadedRef.current = true;
+          resolve();
+        };
+        script.onerror = () => {
+          reject(new Error("Failed to load jsQR"));
+        };
+        document.head.appendChild(script);
+      });
+    }
+
+    await jsQrLoadingRef.current;
   };
 
   const handleStartScan = async () => {
@@ -47,17 +76,31 @@ export const QRCodePage = () => {
       return;
     }
 
-    if (!("BarcodeDetector" in window)) {
-      setError(
-        "Browser tidak mendukung scan QR code langsung dari kamera. Coba gunakan browser lain.",
-      );
-      return;
-    }
+    let mode: "barcodeDetector" | "jsqr" | null = null;
 
-    if (!barcodeDetectorRef.current) {
-      barcodeDetectorRef.current = new BarcodeDetector({
-        formats: ["qr_code"],
-      });
+    if ("BarcodeDetector" in window) {
+      if (!barcodeDetectorRef.current) {
+        barcodeDetectorRef.current = new BarcodeDetector({
+          formats: ["qr_code"],
+        });
+      }
+      mode = "barcodeDetector";
+    } else {
+      try {
+        await loadJsQR();
+        if (!(window as any).jsQR) {
+          setError(
+            "Browser tidak mendukung scan QR code langsung dari kamera. Coba gunakan browser lain.",
+          );
+          return;
+        }
+        mode = "jsqr";
+      } catch {
+        setError(
+          "Browser tidak mendukung scan QR code langsung dari kamera. Coba gunakan browser lain.",
+        );
+        return;
+      }
     }
 
     try {
@@ -75,6 +118,7 @@ export const QRCodePage = () => {
 
       video.srcObject = stream;
       await video.play();
+      setScanMode(mode);
       setIsScanning(true);
     } catch (e) {
       const message =
@@ -97,8 +141,9 @@ export const QRCodePage = () => {
     let cancelled = false;
     const video = videoRef.current;
     const detector = barcodeDetectorRef.current;
+    const captureCanvas = captureCanvasRef.current;
 
-    if (!video || !detector) return;
+    if (!video) return;
 
     const scan = async () => {
       if (cancelled) return;
@@ -109,17 +154,57 @@ export const QRCodePage = () => {
       }
 
       try {
-        const barcodes = await detector.detect(video);
-        if (barcodes && barcodes.length > 0) {
-          const value = barcodes[0].rawValue ?? "";
-          if (value) {
-            setScannedText(value);
-          } else {
-            setScannedText("");
+        if (scanMode === "barcodeDetector") {
+          if (!detector) return;
+          const barcodes = await detector.detect(video);
+          if (barcodes && barcodes.length > 0) {
+            const value = barcodes[0].rawValue ?? "";
+            if (value) {
+              setScannedText(value);
+            } else {
+              setScannedText("");
+            }
+            setIsScanning(false);
+            stopStream();
+            return;
           }
-          setIsScanning(false);
-          stopStream();
-          return;
+        } else if (scanMode === "jsqr") {
+          if (!captureCanvas) return;
+          const jsQR = (window as any).jsQR;
+          if (!jsQR) return;
+
+          const width = video.videoWidth || 0;
+          const height = video.videoHeight || 0;
+          if (!width || !height) {
+            requestAnimationFrame(scan);
+            return;
+          }
+
+          if (
+            captureCanvas.width !== width ||
+            captureCanvas.height !== height
+          ) {
+            captureCanvas.width = width;
+            captureCanvas.height = height;
+          }
+
+          const ctx = captureCanvas.getContext("2d");
+          if (!ctx) return;
+
+          ctx.drawImage(video, 0, 0, width, height);
+          const imageData = ctx.getImageData(0, 0, width, height);
+          const result = jsQR(
+            imageData.data,
+            imageData.width,
+            imageData.height,
+          );
+
+          if (result && result.data) {
+            setScannedText(result.data as string);
+            setIsScanning(false);
+            stopStream();
+            return;
+          }
         }
       } catch (e) {
         if (!cancelled) {
@@ -141,7 +226,7 @@ export const QRCodePage = () => {
     return () => {
       cancelled = true;
     };
-  }, [isScanning]);
+  }, [isScanning, scanMode]);
 
   useEffect(() => {
     return () => {
@@ -174,6 +259,7 @@ export const QRCodePage = () => {
                 playsInline
                 muted
               />
+              <canvas ref={captureCanvasRef} className="hidden" />
             </div>
 
             <div className="flex justify-center gap-2">

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   Card,
   CardContent,
@@ -15,6 +15,64 @@ import { useAPI, useHistory } from "../hooks";
 import { apiService } from "../services/api";
 import { Loading } from "../components/common/Loading";
 import { Send, Copy, Download, RotateCcw } from "lucide-react";
+
+type MarkdownTextProps = {
+  text: string;
+  className?: string;
+};
+
+function formatMarkdownToHtml(text: string): string {
+  if (!text) return "";
+  let html = text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+
+  html = html.replace(/```([\s\S]*?)```/g, (_, code: string) => {
+    const trimmed = code.replace(/^\n+|\n+$/g, "");
+    return `<pre class="rounded-md bg-muted px-3 py-2 text-[11px] overflow-x-auto"><code>${trimmed}</code></pre>`;
+  });
+
+  html = html.replace(
+    /^### (.*)$/gm,
+    '<h3 class="font-semibold mt-3 mb-1 text-xs">$1</h3>',
+  );
+  html = html.replace(
+    /^## (.*)$/gm,
+    '<h2 class="font-semibold mt-3 mb-1 text-xs">$1</h2>',
+  );
+  html = html.replace(
+    /^# (.*)$/gm,
+    '<h1 class="font-semibold mt-3 mb-1 text-xs">$1</h1>',
+  );
+
+  html = html.replace(/^\s*[-*] (.*)$/gm, '<li class="ml-4 list-disc">$1</li>');
+  html = html.replace(/(<li[^>]*>.*<\/li>\s*)+/g, (match) => {
+    return `<ul class="my-1">${match}</ul>`;
+  });
+
+  html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+  html = html.replace(
+    /`([^`]+)`/g,
+    '<code class="px-1 py-0.5 rounded bg-muted text-[11px]">$1</code>',
+  );
+
+  html = html.replace(/\n{2,}/g, "</p><p>");
+  html = `<p>${html}</p>`;
+
+  return html;
+}
+
+const MarkdownText = ({ text, className }: MarkdownTextProps) => {
+  const html = useMemo(() => formatMarkdownToHtml(text), [text]);
+
+  return (
+    <div
+      className={`prose prose-sm max-w-none break-words text-xs text-muted-foreground ${className ?? ""}`}
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
+  );
+};
 
 export const LLMPage = () => {
   const { isLoading, error, execute, reset } = useAPI();
@@ -182,9 +240,10 @@ export const LLMPage = () => {
                   }}
                 >
                   <p className="font-medium line-clamp-2">{entry.input}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {entry.output}
-                  </p>
+                  <MarkdownText
+                    text={entry.output}
+                    className="mt-1 line-clamp-4"
+                  />
                   <p className="text-xs text-muted-foreground">
                     {new Date(entry.timestamp).toLocaleTimeString()}
                   </p>
@@ -212,12 +271,7 @@ export const LLMPage = () => {
             <CardTitle>Response</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <Textarea
-              value={response}
-              onChange={(e) => setResponse(e.target.value)}
-              className="min-h-40"
-              placeholder="Response will appear here"
-            />
+            <MarkdownText text={response} className="mt-1 text-base" />
             <div className="flex gap-2">
               <Button
                 onClick={handleCopyResponse}
